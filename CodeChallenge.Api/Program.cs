@@ -1,3 +1,4 @@
+using CodeChallenge.Api.Logic;
 using CodeChallenge.Api.Repositories;
 using Newtonsoft.Json.Serialization;
 using Serilog;
@@ -19,6 +20,7 @@ builder.Host.UseSerilog();
 
 // Register repositories
 builder.Services.AddSingleton<IMessageRepository, InMemoryMessageRepository>();
+builder.Services.AddScoped<IMessageLogic, MessageLogic>();
 
 var app = builder.Build();
 

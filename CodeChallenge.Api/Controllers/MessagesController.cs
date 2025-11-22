@@ -1,3 +1,4 @@
+using CodeChallenge.Api.Logic;
 using CodeChallenge.Api.Models;
 using CodeChallenge.Api.Repositories;
 using GlobalShared.CommonUtils.Library;
@@ -10,12 +11,12 @@ namespace CodeChallenge.Api.Controllers;
 [Route("api/v1/organizations/{organizationId}/messages")]
 public class MessagesController : ControllerBase
 {
-    private readonly IMessageRepository _repository;
+    private readonly IMessageLogic _logic;
     private readonly ILogger<MessagesController> _logger;
 
-    public MessagesController(IMessageRepository repository, ILogger<MessagesController> logger)
+    public MessagesController(IMessageLogic logic, ILogger<MessagesController> logger)
     {
-        _repository = repository;
+        _logic = logic;
         _logger = logger;
     }
 
@@ -28,7 +29,7 @@ public class MessagesController : ControllerBase
         try
         {
             _logger.LogInformation("MessagesController : GetAll : Start.");
-            result = await _repository.GetAllByOrganizationAsync(organizationId);
+            result = await _logic.GetAllMessagesAsync(organizationId);
             if (result != null && result.Count() > 0)
             {
                 _logger.LogInformation("MessagesController : GetAll : All Organization Message Fetched Successfully.");
@@ -55,7 +56,7 @@ public class MessagesController : ControllerBase
         try
         {
             _logger.LogInformation("MessagesController : GetById : Start.");
-            result = await _repository.GetByIdAsync(organizationId, id);
+            result = await _logic.GetMessageAsync(organizationId, id);
             if (result != null)
             {
                 _logger.LogInformation("MessagesController : GetById : Message Fetched Successfully.");
@@ -74,32 +75,32 @@ public class MessagesController : ControllerBase
     }
 
     [HttpPost]
-    public async Task<ActionResult<Message>> Create(Guid organizationId, [FromBody] CreateMessageRequest request)
+    public async Task<ActionResult<Result>> Create(Guid organizationId, [FromBody] CreateMessageRequest request)
     {
         // TODO: Implement
-        var response = new ResponseViewModel<Message>();
-        Message result = null;
+        var response = new ResponseViewModel<Result>();
+        Result result = null;
         try
         {
             _logger.LogInformation("MessagesController : Create : Start.");
-            var newMessage = new Message
+            result = await _logic.CreateMessageAsync(organizationId, request);
+            switch (result)
             {
-                Id = Guid.NewGuid(),
-                OrganizationId = organizationId,
-                Title = request.Title,
-                Content = request.Content,
-                CreatedAt = DateTime.UtcNow
-            };
-            result = await _repository.CreateAsync(newMessage);
-            if (result != null)
-            {
-                _logger.LogInformation($"MessagesController : Create : Message Created Successfully {newMessage.Id}.");
-                response = Utils.ResponseMapping((int)HttpStatusCode.Created, $"Message Created Successfully.", result, null);
-                return this.Ok(response);
-            }
+                case Created<Message>:
+                    _logger.LogInformation("MessagesController : Create : Message Created successfully.");
+                    return Ok(Utils.ResponseMapping((int)HttpStatusCode.OK, "Message Created successfully.", result, null));
 
-            response = Utils.ResponseMapping((int)HttpStatusCode.BadRequest, $"Message Creation Failed.", result ?? null, null);
-            return this.StatusCode((int)HttpStatusCode.BadRequest, response);
+                case Conflict cf:
+                    _logger.LogWarning($"MessagesController : Create : Conflict. {cf.Message}");
+                    return Conflict(Utils.ResponseMapping((int)HttpStatusCode.Conflict, cf.Message, result, null));
+
+                case ValidationError validationError:
+                    _logger.LogWarning($"MessagesController : Create : ValidationError");
+                    return BadRequest(Utils.ResponseMapping((int)HttpStatusCode.BadRequest, "Create Failed", result, null));
+
+                default:
+                    return BadRequest(Utils.ResponseMapping((int)HttpStatusCode.BadRequest, "Create failed.", result, null));
+            }
         }
         catch (Exception ex)
         {
@@ -112,33 +113,33 @@ public class MessagesController : ControllerBase
     public async Task<ActionResult> Update(Guid organizationId, Guid id, [FromBody] UpdateMessageRequest request)
     {
         // TODO: Implement
-        var response = new ResponseViewModel<Message>();
-        Message result = null;
+        var response = new ResponseViewModel<Result>();
+        Result result = null;
         try
         {
             _logger.LogInformation("MessagesController : Update : Start.");
-            var existing = await _repository.GetByIdAsync(organizationId, id);
-            if (existing == null)
+            result = await _logic.UpdateMessageAsync(organizationId, id, request);
+            switch (result)
             {
-                _logger.LogInformation("MessagesController : Update : Existing Message Not Found.");
-                response = Utils.ResponseMapping((int)HttpStatusCode.NotFound, $"Organizations Not Found.", result ?? null, null);
-                return this.StatusCode((int)HttpStatusCode.NotFound, response);
+                case Updated:
+                    _logger.LogInformation("MessagesController : Update : Message Updated successfully.");
+                    return Ok(Utils.ResponseMapping((int)HttpStatusCode.OK, "Message Updated successfully.", result, null));
+
+                case NotFound nf:
+                    _logger.LogWarning($"MessagesController : Update : Not found. {nf.Message}");
+                    return NotFound(Utils.ResponseMapping((int)HttpStatusCode.NotFound, nf.Message, result, null));
+
+                case Conflict cf:
+                    _logger.LogWarning($"MessagesController : Update : Conflict. {cf.Message}");
+                    return Conflict(Utils.ResponseMapping((int)HttpStatusCode.Conflict, cf.Message, result, null));
+
+                case ValidationError validationError:
+                    _logger.LogWarning($"MessagesController : Update : ValidationError");
+                    return BadRequest(Utils.ResponseMapping((int)HttpStatusCode.BadRequest, "Update Failed", result, null));
+
+                default:
+                    return BadRequest(Utils.ResponseMapping((int)HttpStatusCode.BadRequest, "Update failed.", result, null));
             }
-
-            existing.Content = request.Content;
-            existing.Title = request.Title;
-            existing.IsActive = request.IsActive;
-
-            result = await _repository.UpdateAsync(existing);
-            if (result != null)
-            {
-                _logger.LogInformation($"MessagesController : Update : Updated {existing.Id}.");
-                response = Utils.ResponseMapping((int)HttpStatusCode.OK, $"Message Updated Successfully.", result, null);
-                return this.Ok(response);
-            }
-
-            response = Utils.ResponseMapping((int)HttpStatusCode.BadRequest, $"Message Update Failed.", result ?? null, null);
-            return this.StatusCode((int)HttpStatusCode.BadRequest, response);
         }
         catch (Exception ex)
         {
@@ -151,29 +152,29 @@ public class MessagesController : ControllerBase
     public async Task<ActionResult> Delete(Guid organizationId, Guid id)
     {
         // TODO: Implement
-        var response = new ResponseViewModel<string>();
-        string result = string.Empty;
+        var response = new ResponseViewModel<Result>();
+        Result result = null;
         try
         {
             _logger.LogInformation("MessagesController : Delete : Start.");
-            var existing = await _repository.GetByIdAsync(organizationId, id);
-            if (existing == null)
+            result = await _logic.DeleteMessageAsync(organizationId, id);
+            switch (result)
             {
-                _logger.LogInformation("MessagesController : Delete : Existing Message Not Found.");
-                response = Utils.ResponseMapping((int)HttpStatusCode.NotFound, $"Organizations Not Found.", result, null);
-                return this.StatusCode((int)HttpStatusCode.NotFound, response);
-            }
+                case Deleted:
+                    _logger.LogInformation("MessagesController : Delete : Deleted successfully.");
+                    return Ok(Utils.ResponseMapping((int)HttpStatusCode.OK, "Message deleted successfully.", result, null));
 
-            bool isDeleted = await _repository.DeleteAsync(organizationId, id);
-            if (isDeleted)
-            {
-                _logger.LogInformation($"MessagesController : Delete : Deleted {existing.Id}.");
-                response = Utils.ResponseMapping((int)HttpStatusCode.OK, $"Message Deleted Successfully.", $"Message Deleted Successfully.", null);
-                return this.Ok(response);
-            }
+                case NotFound nf:
+                    _logger.LogWarning($"MessagesController : Delete : Not found. {nf.Message}");
+                    return NotFound(Utils.ResponseMapping((int)HttpStatusCode.NotFound, nf.Message, result, null ));
 
-            response = Utils.ResponseMapping((int)HttpStatusCode.BadRequest, $"Message Deletion Failed.", $"Message Deletion Failed.", null);
-            return this.StatusCode((int)HttpStatusCode.BadRequest, response);
+                case Conflict cf:
+                    _logger.LogWarning($"MessagesController : Delete : Conflict. {cf.Message}");
+                    return Conflict(Utils.ResponseMapping((int)HttpStatusCode.Conflict, cf.Message, result, null));
+
+                default:
+                    return BadRequest(Utils.ResponseMapping((int)HttpStatusCode.BadRequest, "Delete failed.", result, null));
+            }
         }
         catch (Exception ex)
         {
